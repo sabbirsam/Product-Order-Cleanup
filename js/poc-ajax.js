@@ -20,8 +20,10 @@ jQuery(document).ready(function($) {
                         return;
                     }
                     $(`#${type}-total`).text(count);
+                    // Add skipped counter
+                    $(`#${type}-progress-container`).append(`<div class="skip-info">Skipped: <span id="${type}-skipped">0</span></div>`);
                     $(`#${type}-progress-container`).slideDown(300);
-                    processBatch(type, 0, count);
+                    processBatch(type, 0, count, 0); // Added skipped counter parameter
                 } else {
                     handleError(type, response.data || 'Error getting counts');
                 }
@@ -32,7 +34,7 @@ jQuery(document).ready(function($) {
         });
     }
 
-    function processBatch(type, offset, total) {
+    function processBatch(type, offset, total, skipped) {
         $.ajax({
             url: poc_ajax_obj.ajax_url,
             type: 'POST',
@@ -44,11 +46,14 @@ jQuery(document).ready(function($) {
             success: function(response) {
                 if (response.success) {
                     const processed = offset + response.data.deleted;
+                    // Add skipped items from this batch
+                    const newSkipped = skipped + (response.data.skipped || 0);
                     const percentage = Math.round((processed / total) * 100);
                     
                     // Update progress
                     $(`#${type}-progress-bar`).css('width', percentage + '%');
                     $(`#${type}-processed`).text(processed);
+                    $(`#${type}-skipped`).text(newSkipped);
                     
                     // Log any errors from this batch
                     if (response.data.errors && response.data.errors.length > 0) {
@@ -57,10 +62,18 @@ jQuery(document).ready(function($) {
                     
                     if (!response.data.done) {
                         // Process next batch
-                        processBatch(type, processed, total);
+                        processBatch(type, processed, total, newSkipped);
                     } else {
+                        // Show final summary before verification
+                        const successCount = processed - newSkipped;
+                        console.log(`Deletion Summary:
+                            Total: ${total}
+                            Processed: ${processed}
+                            Successful: ${successCount}
+                            Skipped: ${newSkipped}`
+                        );
                         // Verify deletion
-                        verifyDeletion(type);
+                        verifyDeletion(type, newSkipped);
                     }
                 } else {
                     handleError(type, response.data || `Error deleting ${type}s`);
@@ -72,7 +85,7 @@ jQuery(document).ready(function($) {
         });
     }
 
-    function verifyDeletion(type) {
+    function verifyDeletion(type, skipped) {
         $.ajax({
             url: poc_ajax_obj.ajax_url,
             type: 'POST',
@@ -83,11 +96,12 @@ jQuery(document).ready(function($) {
             success: function(response) {
                 if (response.success) {
                     const remainingCount = type === 'product' ? response.data.product_count : response.data.order_count;
-                    if (remainingCount > 0) {
-                        handleError(type, `Some ${type}s could not be deleted. Please try again.`);
+                    if (remainingCount > skipped) {
+                        handleError(type, `Unexpected number of ${type}s remained. Expected ${skipped}, found ${remainingCount}. Please try again.`);
                     } else {
                         $(`#delete-${type}s-btn .poc-spinner`).hide();
-                        alert(`All ${type}s have been successfully deleted!`);
+                        // Updated success message to include skipped items
+                        alert(`Operation completed!\n${skipped} ${type}s were skipped\n${remainingCount === skipped ? 'All remaining' : 'Some'} ${type}s have been successfully deleted!`);
                         location.reload();
                     }
                 } else {

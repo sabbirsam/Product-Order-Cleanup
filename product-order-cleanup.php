@@ -2,7 +2,7 @@
 /*
 Plugin Name: Product & Order Cleanup
 Description: Adds functionality to bulk delete all products or orders with confirmation and progress tracking
-Version: 1.1
+Version: 1.2
 Author: Your Name
 */
 
@@ -87,6 +87,8 @@ function poc_admin_page() {
                     </div>
                     <p class="poc-progress-text">
                         Processed: <span id="product-processed">0</span> / <span id="product-total">0</span>
+                        <br>
+                        
                     </p>
                 </div>
                 
@@ -113,6 +115,8 @@ function poc_admin_page() {
                     </div>
                     <p class="poc-progress-text">
                         Processed: <span id="order-processed">0</span> / <span id="order-total">0</span>
+                        <br>
+                        
                     </p>
                 </div>
                 
@@ -165,7 +169,7 @@ function poc_delete_products_batch() {
     }
 
     $offset = isset($_POST['offset']) ? (int)$_POST['offset'] : 0;
-    $batch_size = 100;
+    $batch_size = 40;
     
     // Get batch of products
     $products = wc_get_products(array(
@@ -175,43 +179,55 @@ function poc_delete_products_batch() {
     ));
     
     $deleted = 0;
-    $errors = array();
+    $skipped = 0;
+    $skipped_ids = array();
     
     foreach ($products as $product) {
         try {
+            $deletion_successful = true;
+            
             // Delete variations first if it's a variable product
             if ($product->is_type('variable')) {
                 $variations = $product->get_children();
                 foreach ($variations as $variation_id) {
                     $variation = wc_get_product($variation_id);
-                    if ($variation) {
-                        $variation->delete(true);
+                    if ($variation && !$variation->delete(true)) {
+                        $deletion_successful = false;
                     }
                 }
             }
             
             // Delete the product
-            $result = $product->delete(true);
-            if ($result) {
+            if ($deletion_successful && $product->delete(true)) {
                 $deleted++;
             } else {
-                $errors[] = "Failed to delete product ID: " . $product->get_id();
+                $skipped++;
+                $skipped_ids[] = array(
+                    'id' => $product->get_id(),
+                    'name' => $product->get_name()
+                );
             }
         } catch (Exception $e) {
-            $errors[] = $e->getMessage();
+            $skipped++;
+            $skipped_ids[] = array(
+                'id' => $product->get_id(),
+                'name' => $product->get_name(),
+                'error' => $e->getMessage()
+            );
             continue;
         }
     }
 
-    // Log errors if any
-    if (!empty($errors)) {
-        error_log('Product deletion errors: ' . print_r($errors, true));
+    // Log skipped products
+    if (!empty($skipped_ids)) {
+        error_log('Skipped products during bulk deletion: ' . print_r($skipped_ids, true));
     }
     
     wp_send_json_success(array(
         'deleted' => $deleted,
-        'done' => count($products) < $batch_size,
-        'errors' => $errors
+        'skipped' => $skipped,
+        'skipped_ids' => $skipped_ids,
+        'done' => count($products) < $batch_size
     ));
 }
 
@@ -226,7 +242,7 @@ function poc_delete_orders_batch() {
     }
 
     $offset = isset($_POST['offset']) ? (int)$_POST['offset'] : 0;
-    $batch_size = 100;
+    $batch_size = 40;
     
     // Get batch of orders
     $orders = wc_get_orders(array(
@@ -236,31 +252,41 @@ function poc_delete_orders_batch() {
     ));
     
     $deleted = 0;
-    $errors = array();
+    $skipped = 0;
+    $skipped_ids = array();
     
     foreach ($orders as $order) {
         try {
             // Delete the order
-            $result = $order->delete(true);
-            if ($result) {
+            if ($order->delete(true)) {
                 $deleted++;
             } else {
-                $errors[] = "Failed to delete order ID: " . $order->get_id();
+                $skipped++;
+                $skipped_ids[] = array(
+                    'id' => $order->get_id(),
+                    'number' => $order->get_order_number()
+                );
             }
         } catch (Exception $e) {
-            $errors[] = $e->getMessage();
+            $skipped++;
+            $skipped_ids[] = array(
+                'id' => $order->get_id(),
+                'number' => $order->get_order_number(),
+                'error' => $e->getMessage()
+            );
             continue;
         }
     }
 
-    // Log errors if any
-    if (!empty($errors)) {
-        error_log('Order deletion errors: ' . print_r($errors, true));
+    // Log skipped orders
+    if (!empty($skipped_ids)) {
+        error_log('Skipped orders during bulk deletion: ' . print_r($skipped_ids, true));
     }
     
     wp_send_json_success(array(
         'deleted' => $deleted,
-        'done' => count($orders) < $batch_size,
-        'errors' => $errors
+        'skipped' => $skipped,
+        'skipped_ids' => $skipped_ids,
+        'done' => count($orders) < $batch_size
     ));
 }
